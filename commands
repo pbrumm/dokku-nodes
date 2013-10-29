@@ -1,0 +1,195 @@
+#!/bin/bash
+set -e;
+
+# Check if name is specified
+if [[ $1 == nodes ]] || [[ $1 == nodes:* ]]; then
+  echo $HOME
+  if [[ -z $2 ]]; then
+    echo "You must specify an app name"
+    exit 1
+  else
+    APP="$2"
+    ENV_FILE="/home/git/$APP/NODES"
+    echo $ENV_FILE
+    # Check if app exists with the same name
+    if [ ! -d "/home/git/$APP" ]; then
+      echo "$APP does not exist"
+      exit 1
+    fi
+
+    [ -f $ENV_FILE ] || {
+      echo "-----> Creating $ENV_FILE"
+      touch $ENV_FILE
+    }
+  fi
+fi
+
+styled_hash () {
+  vars=`echo -e "$1"`
+
+  longest=""
+  for word in $vars; do
+    KEY=`echo $word | cut -d"=" -f1`
+    if [ ${#KEY} -gt ${#longest} ]; then
+      longest=$KEY
+    fi
+  done
+
+  for word in $vars; do
+    KEY=`echo $word | cut -d"=" -f1`
+    VALUE=`echo $word | cut -d"=" -f2-`
+
+    num_zeros=$((${#longest} - ${#KEY}))
+    zeros=" "
+    while [ $num_zeros -gt 0 ]; do
+      zeros="$zeros "
+      num_zeros=$(($num_zeros - 1))
+    done
+    echo "$KEY:$zeros$VALUE"
+  done
+}
+
+nodes_restart_app() {
+  APP="$1"; IMAGE="app/$APP"
+
+  echo "-----> Releasing $APP ..."
+  dokku release $APP $IMAGE
+  echo "-----> Release complete!"
+  echo "-----> Deploying $APP ..."
+  dokku deploy $APP $IMAGE
+  echo "-----> Deploy complete!"
+}
+
+case "$1" in
+
+  nodes)
+    APP="$2"
+
+    if [ ! -f $ENV_FILE ] || [ ! -s $ENV_FILE ] ; then
+      echo "$APP has no nodes vars"
+      exit 1
+    fi
+
+    VARS=`cat $ENV_FILE | grep -Eo "export ([a-zA-Z_][a-zA-Z0-9_]*=.*)" | cut -d" " -f2`
+
+    for var in "$@"; do
+      if [[ "$var" == "--shell" ]]; then
+        cat $ENV_FILE
+        exit 0
+      fi
+    done
+
+    echo "=== $APP Config Vars"
+    styled_hash "$VARS"
+  ;;
+
+  nodes:get)
+    if [[ -z $3 ]]; then
+      echo "Usage: dokku nodes:get APP KEY"
+      echo "Must specify KEY."
+      exit 1
+    fi
+
+    if [ ! -f $ENV_FILE ] || [ ! -s $ENV_FILE ] ; then
+      exit 1
+    fi
+
+    KEY="$3"
+
+    cat $ENV_FILE | grep -Eo "export ([a-zA-Z_][a-zA-Z0-9_]*=.*)" | cut -d" " -f2 | grep -Eo "^$KEY$" | cut -d"=" -f2-
+  ;;
+
+  nodes:set)
+    if [[ -z "${*:3}" ]]; then
+      echo "Usage: dokku nodes:set APP KEY1=VALUE1 [KEY2=VALUE2 ...]"
+      echo "Must specify KEY and VALUE to set."
+      exit 1
+    fi
+    APP="$2"; APP_DIR="/home/git/$APP"
+    ENV_ADD=""
+    ENV_TEMP=`cat "${ENV_FILE}"`
+    # disabling requirement for app to be running to set nodes
+#    ID=$(< "$APP_DIR/CONTAINER")
+    # disabling restart for now
+    RESTART=false
+    VARS="${*:3}"
+    for var in $VARS; do
+      KEY=`echo ${var} | cut -d"=" -f1`
+      VALUE=`echo ${var} | cut -d"=" -f2-`
+      if [[ $KEY == [a-zA-Z_][a-zA-Z0-9_]* ]] && [ ${#VALUE} -gt 0 ]; then
+        RESTART_APP=false
+        ENV_TEMP=$(echo -e "${ENV_TEMP}" | sed "/^$KEY=/ d")
+        ENV_TEMP="${ENV_TEMP}\n${var}"
+        ENV_ADD=$(echo -e "${ENV_ADD}" | sed "/^$KEY=/ d")
+        ENV_ADD="${ENV_ADD}\n${var}"
+      fi
+    done
+    echo "-----> The following commands need to be run on the primary build box"
+    for var in $VARS; do
+      KEY=`echo ${var} | cut -d"=" -f1`
+      VALUE=`echo ${var} | cut -d"=" -f2-`
+      if [[ $KEY == [a-zA-Z_][a-zA-Z0-9_]* ]] && [ ${#VALUE} -gt 0 ]; then
+        echo "su - git -c \"cat /home/git/.ssh/id_rsa.pub | ssh root@$VALUE sshcommand acl-add git git-user\""
+      fi
+    done
+
+    if [ $RESTART_APP ]; then
+      echo "-----> Setting nodes vars and restarting $APP"
+      styled_hash "$ENV_ADD"
+
+      echo -e "$ENV_TEMP" | sed '/^$/d' | sort > $ENV_FILE
+      nodes_restart_app $APP
+    fi
+  ;;
+
+  nodes:unset)
+    if [[ -z $3 ]]; then
+      echo "Usage: dokku nodes:unset APP KEY1 [KEY2 ...]"
+      echo "Must specify KEY to unset."
+      exit 1
+    fi
+
+    APP="$2"; APP_DIR="/home/git/$APP"
+    ENV_TEMP=`cat "${ENV_FILE}"`
+    ID=$(< "$APP_DIR/CONTAINER")
+    VARS="${*:3}"
+
+    for var in $VARS; do
+      echo "-----> Unsetting $var and restarting $APP"
+      ENV_TEMP=$(echo -e "${ENV_TEMP}" | sed "/^$var=/ d")
+
+      echo -e "$ENV_TEMP" | sed '/^$/d' | sort > $ENV_FILE
+      nodes_restart_app $APP
+    done
+  ;;
+  nodes:internal:deploy)
+    APP="$2"; PORT="$3"; PROC_TYPE=${4-web}; APP_DIR="/home/git/$APP";
+    IMAGE="app/$APP"
+    if [[ ! -d "$APP_DIR" ]]; then
+      mkdir $APP_DIR
+      echo $PORT > $APP_DIR/PORT
+      echo $PROC_TYPE > $APP_DIR/PROCTYPE
+    fi
+    docker pull localhost:5000/appl/$APP
+    docker tag localhost:5000/appl/$APP $IMAGE
+    echo $HOME
+    oldid=$(< "/home/git/$APP/CONTAINER")
+    echo $oldid
+    if [[ -n "$oldid" ]]; then
+      docker kill $oldid > /dev/null
+    fi
+    id=$(docker run -d -p ":$PORT" -e "PORT=$PORT" $IMAGE /bin/bash -c "/start $PROC_TYPE")
+    echo $id > "/home/git/$APP/CONTAINER"
+    pluginhook post-deploy $APP $PORT
+    ;;
+  help)
+    cat && cat<<EOF
+    nodes <app>                                    display the nodes vars for an app
+    nodes:get <app> KEY                            display a nodes value for an app
+    nodes:set <app> KEY1=VALUE1 [KEY2=VALUE2 ...]  set one or more nodes vars
+    nodes:unset <app> KEY1 [KEY2 ...]              unset one or more nodes vars
+EOF
+  ;;
+
+esac
+cat

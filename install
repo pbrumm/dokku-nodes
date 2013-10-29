@@ -1,0 +1,3 @@
+if [[ ! -f "/home/git/.ssh/id_rsa.pub" ]]; then
+  su - git -c "ssh-keygen -y"
+fi
