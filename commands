@@ -18,11 +18,6 @@ if [[ $1 == nodes ]] || [[ $1 == nodes:* ]]; then
         exit 1
       fi
     fi
-
-    [ -f $ENV_FILE ] || {
-      echo "-----> Creating $ENV_FILE"
-      touch $ENV_FILE
-    }
   fi
 fi
 
@@ -179,7 +174,7 @@ case "$1" in
       oldid=$(< "/home/git/$APP/CONTAINER")
       
     fi
-    id=$(docker run -d -p ":$PORT" -e "PORT=$PORT" $IMAGE /bin/bash -c "/start $PROC_TYPE")
+    id=$(docker run -d -p "$PORT"  $IMAGE /bin/bash -c "/start $PROC_TYPE")
     echo $id > "/home/git/$APP/CONTAINER"
 
 

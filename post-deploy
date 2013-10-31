@@ -15,10 +15,10 @@ update_nodes () {
   done
 }
 
-
-
-REMOTE_APP="localhost:5000/appl/$APP"
-echo "$REMOTE_APP $APP"
-docker tag app/$APP $REMOTE_APP
-docker push $REMOTE_APP
-update_nodes `cat /home/git/$APP/NODES`
+if [[ -d "/home/git/$APP/.git" ]]; then 
+  REMOTE_APP="localhost:5000/appl/$APP"
+  echo "$REMOTE_APP $APP"
+  docker tag app/$APP $REMOTE_APP
+  docker push $REMOTE_APP
+  update_nodes `cat /home/git/$APP/NODES`
+fi
