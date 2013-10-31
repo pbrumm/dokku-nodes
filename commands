@@ -12,9 +12,11 @@ if [[ $1 == nodes ]] || [[ $1 == nodes:* ]]; then
     ENV_FILE="/home/git/$APP/NODES"
     echo $ENV_FILE
     # Check if app exists with the same name
-    if [ ! -d "/home/git/$APP" ]; then
-      echo "$APP does not exist"
-      exit 1
+    if [[ $1 != "nodes:internal:deploy" ]]; then
+      if [ ! -d "/home/git/$APP" ]; then
+        echo "$APP does not exist"
+        exit 1
+      fi
     fi
 
     [ -f $ENV_FILE ] || {
@@ -173,14 +175,21 @@ case "$1" in
     docker pull localhost:5000/appl/$APP
     docker tag localhost:5000/appl/$APP $IMAGE
     echo $HOME
-    oldid=$(< "/home/git/$APP/CONTAINER")
-    echo $oldid
-    if [[ -n "$oldid" ]]; then
-      docker kill $oldid > /dev/null
+    if [[ -f "/home/git/$APP/CONTAINER" ]]; then 
+      oldid=$(< "/home/git/$APP/CONTAINER")
+      
     fi
     id=$(docker run -d -p ":$PORT" -e "PORT=$PORT" $IMAGE /bin/bash -c "/start $PROC_TYPE")
     echo $id > "/home/git/$APP/CONTAINER"
+
+
     pluginhook post-deploy $APP $PORT
+
+    if [[ -n "$oldid" ]]; then
+      echo "waiting for instance to start up"
+      sleep 20
+      docker kill $oldid > /dev/null
+    fi
     ;;
   help)
     cat && cat<<EOF
